@@ -1,0 +1,4 @@
+Flask
+confluent-kafka
+google-generativeai
+Flask-Cors
