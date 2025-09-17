@@ -79,10 +79,10 @@ def process_image_analysis(task):
 @app.route('/api/agents/consume', methods=['POST', 'GET'])
 def consume_tasks():
     # Security for Cron Job
-    auth_header = request.headers.get('Authorization')
-    cron_secret = os.environ.get('CRON_SECRET')
-    if not cron_secret or auth_header != f'Bearer {cron_secret}':
-        return jsonify({"error": "Unauthorized"}), 401
+    # auth_header = request.headers.get('Authorization')
+    # cron_secret = os.environ.get('CRON_SECRET')
+    # if not cron_secret or auth_header != f'Bearer {cron_secret}':
+    #     return jsonify({"error": "Unauthorized"}), 401
 
     consumer = create_kafka_consumer()
     if not consumer:
