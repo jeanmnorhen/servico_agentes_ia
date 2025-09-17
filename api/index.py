@@ -11,6 +11,10 @@ import google.generativeai as genai
 app = Flask(__name__)
 CORS(app)
 
+# --- Variáveis globais para erros de inicialização ---
+gemini_init_error = None
+kafka_init_error = None
+
 # --- Google Gemini Configuration ---
 try:
     gemini_api_key = os.environ.get('GEMINI_API_KEY')
@@ -18,12 +22,15 @@ try:
         genai.configure(api_key=gemini_api_key)
         print("Google Gemini configurado com sucesso.")
     else:
-        print("Variável de ambiente GEMINI_API_KEY não encontrada.")
+        gemini_init_error = "Variável de ambiente GEMINI_API_KEY não encontrada."
+        print(gemini_init_error)
 except Exception as e:
+    gemini_init_error = str(e)
     print(f"Erro ao configurar Gemini: {e}")
 
 # --- Kafka Consumer Configuration ---
-def create_kafka_consumer():
+kafka_consumer_instance = None
+if Consumer:
     try:
         kafka_conf = {
             'bootstrap.servers': os.environ.get('KAFKA_BOOTSTRAP_SERVER'),
@@ -34,17 +41,18 @@ def create_kafka_consumer():
             'sasl.username': os.environ.get('KAFKA_API_KEY'),
             'sasl.password': os.environ.get('KAFKA_API_SECRET')
         }
-        if not kafka_conf['bootstrap.servers']:
-            print("Variáveis de ambiente do Kafka não encontradas.")
-            return None
-        
-        consumer = Consumer(kafka_conf)
-        consumer.subscribe(['tarefas_ia'])
-        print("Consumidor Kafka para 'tarefas_ia' inicializado.")
-        return consumer
+        if kafka_conf['bootstrap.servers']:
+            kafka_consumer_instance = Consumer(kafka_conf)
+            kafka_consumer_instance.subscribe(['tarefas_ia'])
+            print("Consumidor Kafka para 'tarefas_ia' inicializado.")
+        else:
+            kafka_init_error = "Variáveis de ambiente do Kafka não encontradas."
+            print(kafka_init_error)
     except Exception as e:
+        kafka_init_error = str(e)
         print(f"Erro ao inicializar Consumidor Kafka: {e}")
-        return None
+else:
+    kafka_init_error = "Biblioteca confluent_kafka não encontrada."
 
 # --- AI Agent Logic ---
 def process_image_analysis(task):
@@ -84,14 +92,13 @@ def consume_tasks():
     # if not cron_secret or auth_header != f'Bearer {cron_secret}':
     #     return jsonify({"error": "Unauthorized"}), 401
 
-    consumer = create_kafka_consumer()
-    if not consumer:
-        return jsonify({"error": "Kafka consumer could not be created."}), 503
+    if not kafka_consumer_instance:
+        return jsonify({"error": "Kafka consumer not initialized.", "details": kafka_init_error}), 503
 
     messages_processed = 0
     results = []
     try:
-        msgs = consumer.consume(num_messages=5, timeout=10.0)
+        msgs = kafka_consumer_instance.consume(num_messages=5, timeout=10.0)
         if not msgs:
             return jsonify({"status": "No new messages to process"}), 200
 
@@ -123,28 +130,44 @@ def consume_tasks():
         print(f"An error occurred during message consumption: {e}")
         return jsonify({"error": str(e)}), 500
     finally:
-        consumer.close()
+        # O consumidor não deve ser fechado aqui se for uma instância global
+        # kafka_consumer_instance.close() # Removido
+        pass
 
     return jsonify({"status": "ok", "messages_processed": messages_processed, "results": results}), 200
 
-@app.route('/api/health', methods=['GET'])
-def health_check():
-    gemini_status = "ok" if genai.api_key else "error"
-    
-    kafka_consumer = create_kafka_consumer()
-    kafka_status = "error"
-    if kafka_consumer:
-        kafka_status = "ok"
-        try:
-            kafka_consumer.close()
-        except Exception as e:
-            print(f"Error closing Kafka consumer during health check: {e}")
+def get_health_status():
+    env_vars = {
+        "GEMINI_API_KEY": "present" if os.environ.get('GEMINI_API_KEY') else "missing",
+        "KAFKA_BOOTSTRAP_SERVER": "present" if os.environ.get('KAFKA_BOOTSTRAP_SERVER') else "missing",
+        "KAFKA_API_KEY": "present" if os.environ.get('KAFKA_API_KEY') else "missing",
+        "KAFKA_API_SECRET": "present" if os.environ.get('KAFKA_API_SECRET') else "missing"
+    }
 
     status = {
-        "gemini_api": gemini_status,
-        "kafka_consumer": kafka_status
+        "environment_variables": env_vars,
+        "dependencies": {
+            "gemini_api": "ok" if not gemini_init_error else "error",
+            "kafka_consumer": "ok" if kafka_consumer_instance and not kafka_init_error else "error"
+        },
+        "initialization_errors": {
+            "gemini": gemini_init_error,
+            "kafka": kafka_init_error
+        }
     }
-    http_status = 200 if all(s == "ok" for s in status.values()) else 503
+    return status
+
+@app.route('/api/health', methods=['GET'])
+def health_check():
+    status = get_health_status()
+    
+    all_ok = (
+        all(value == "present" for value in status["environment_variables"].values()) and
+        status["dependencies"]["gemini_api"] == "ok" and
+        status["dependencies"]["kafka_consumer"] == "ok"
+    )
+    http_status = 200 if all_ok else 503
+    
     return jsonify(status), http_status
 
 if __name__ == '__main__':
