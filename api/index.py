@@ -102,6 +102,7 @@ def consume_tasks():
 
             try:
                 task = json.loads(msg.value().decode('utf-8'))
+                print(f"Task recebida: {task}")
                 task_type = task.get('task_type')
                 
                 result = None
