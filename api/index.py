@@ -106,7 +106,7 @@ def consume_tasks():
                 task_type = task.get('task_type')
                 
                 result = None
-                if task_type == 'image_analysis':
+                if task_type == 'image_analysis' or task_type == 'analisar_imagem':
                     print(f"Processando tarefa de análise de imagem: {task.get('task_id')}")
                     result = process_image_analysis(task)
                 else:
